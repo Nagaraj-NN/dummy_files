@@ -6,7 +6,7 @@
 -- COLUMN NAME MAPPINGS (source -> target, names differ during INSERT):
 --   - CLOSED_BY_ID -> CLSD_BY_ID
 -- ============================================================
-
+-- test 
 {{ config(
     materialized='incremental',
     unique_key='INCDNT_ID',
