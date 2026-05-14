@@ -1,0 +1,99 @@
+-- ============================================================
+-- CONVERSION SUMMARY
+-- ============================================================
+-- TODO: $AUTOSYS_JOB_NAME not provided - add it to input file
+-- ============================================================
+
+{{ config(
+    materialized='incremental',
+    unique_key='RPRTNG_ID',
+    incremental_strategy='merge',
+    full_refresh=false,
+    pre_hook=[
+        log_model_start(this, '/* TODO: set $AUTOSYS_JOB_NAME */'),
+        truncate_model(this)
+    ],
+    post_hook=[
+        log_model_end(this, '/* TODO: set $AUTOSYS_JOB_NAME */')
+    ]
+) }}
+
+WITH
+JOB_PARAM AS (
+    SELECT PARAM_ID, PARAM_NAME, PARAM_VALUE FROM {{source('CRPDB01_METADATA','SHMSADM_JOB_PARAMETERS')}}
+    WHERE JOB_NAME= 'SHEMS_RPRTNG_GRP_DIM' AND AUTOSYS_JOB_NAME = '/* TODO: set $AUTOSYS_JOB_NAME */' AND ACTIVE_IND = 'Y'
+),
+
+JOB_CONTROL AS (
+    SELECT JOB_ID, START_DATE, END_DATE FROM {{source('CRPDB01_METADATA','SHMSADM_JOB_CONTROL')}}
+    WHERE JOB_NAME= 'SHEMS_RPRTNG_GRP_DIM' AND AUTOSYS_JOB_NAME = '/* TODO: set $AUTOSYS_JOB_NAME */'
+),
+SQ_ODS_SHMS_LOC_ENTTY AS (
+  SELECT
+        A.LOC_CD,
+        A.RPT_GRPLVL_1_VAL_TX,
+        A.RPT_GRPLVL_2_VAL_TX,
+        A.RPT_GRPLVL_3_VAL_TX,
+        A.RPT_GRPLVL_4_VAL_TX,
+        A.HRCHY_LVL_2_TX
+      FROM
+        {{source('CRPDB01_COMMON','ODS_SHMS_LOC_ENTTY_TEST')}} A  --CRPDB01_DEV_SANDBOX.COMMON.ODS_SHMS_LOC_ENTTY_TEST
+      WHERE
+        A.RPT_GRPLVL_1_VAL_TX NOT IN ('na')
+),
+EXPTRANS AS (
+  SELECT
+        LOC_CD,
+        RPT_GRPLVL_1_VAL_TX,
+        RPT_GRPLVL_2_VAL_TX,
+        RPT_GRPLVL_3_VAL_TX,
+        RPT_GRPLVL_4_VAL_TX,
+        CASE
+          HRCHY_LVL_2_TX
+          WHEN 'AEP Corporate' THEN 'Corp/Shared Services'
+          WHEN 'AEP External Affairs' THEN 'Corp/Shared Services'
+          WHEN 'Chief Administrative Office' THEN 'Corp/Shared Services'
+          WHEN 'Chief Info & Tech Officer' THEN 'Corp/Shared Services'
+          WHEN 'Energy Supply' THEN 'Corp/Shared Services'
+          ELSE HRCHY_LVL_2_TX
+        END AS BUSINESS_UNIT_GRP,
+        'Y' AS ACTIVE_FLAG,
+        CURRENT_TIMESTAMP() AS EFFCT_STRT_DT,
+        TRY_TO_DATE('12-31-9999', 'MM-DD-YYYY') AS EFFCT_END_DT,
+        'SHMSUSER' AS EDW_LAST_UPDT_USER_ID,
+        CURRENT_TIMESTAMP() AS EDW_LAST_UPDT_TS
+      FROM SQ_ODS_SHMS_LOC_ENTTY
+),
+FINAL_ROWS AS (
+  SELECT
+        ROW_NUMBER() OVER (ORDER BY LOC_CD) AS RPRTNG_ID,
+        ACTIVE_FLAG,
+        EFFCT_STRT_DT,
+        EFFCT_END_DT,
+        EDW_LAST_UPDT_USER_ID,
+        EDW_LAST_UPDT_TS,
+        LOC_CD,
+        RPT_GRPLVL_1_VAL_TX,
+        RPT_GRPLVL_2_VAL_TX,
+        RPT_GRPLVL_3_VAL_TX,
+        RPT_GRPLVL_4_VAL_TX,
+        BUSINESS_UNIT_GRP
+      FROM EXPTRANS
+)
+
+SELECT
+    CAST(LEFT(TRIM(SRC.RPRTNG_ID), 200) AS VARCHAR(200)) AS RPRTNG_ID,
+    CAST(LEFT(TRIM(SRC.RPT_GRPLVL_1_VAL_TX), 200) AS VARCHAR(200)) AS RPT_GRPLVL_1_VAL_TX,
+    CAST(LEFT(TRIM(SRC.RPT_GRPLVL_2_VAL_TX), 200) AS VARCHAR(200)) AS RPT_GRPLVL_2_VAL_TX,
+    CAST(LEFT(TRIM(SRC.RPT_GRPLVL_3_VAL_TX), 200) AS VARCHAR(200)) AS RPT_GRPLVL_3_VAL_TX,
+    CAST(LEFT(TRIM(SRC.RPT_GRPLVL_4_VAL_TX), 200) AS VARCHAR(200)) AS RPT_GRPLVL_4_VAL_TX,
+    CAST(LEFT(TRIM(SRC.LOC_CD), 200) AS VARCHAR(200)) AS LOC_CD,
+    CAST(TRIM(SRC.EFFCT_STRT_DT) AS TIMESTAMP_NTZ(9)) AS EFFCT_STRT_DT,
+    CAST(TRIM(SRC.EFFCT_END_DT) AS TIMESTAMP_NTZ(9)) AS EFFCT_END_DT,
+    CAST(LEFT(TRIM(SRC.ACTIVE_FLAG), 1) AS VARCHAR(1)) AS ACTIVE_FLAG,
+    CAST(LEFT(TRIM(SRC.EDW_LAST_UPDT_USER_ID), 10) AS VARCHAR(10)) AS EDW_LAST_UPDT_USER_ID,
+    CAST(TRIM(SRC.EDW_LAST_UPDT_TS) AS TIMESTAMP_NTZ(6)) AS EDW_LAST_UPDT_TS,
+    CAST(LEFT(TRIM(SRC.BUSINESS_UNIT_GRP), 200) AS VARCHAR(200)) AS BUSINESS_UNIT_GRP
+
+FROM
+    FINAL_ROWS SRC
